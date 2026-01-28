@@ -1,31 +1,79 @@
-still not printing these:
+--- Antigravity UEFI Decoder v3.0 (Robust Mode) ---
+Scanning NVRAM...
 
+[dbx] d719b2cb-3d3a-4596-a3bc-dad00e67656f (23144 bytes)
+    -> Contains 481 revocation entries (Hashes).
+[Boot0000] 8be4df61-93ca-11d2-aa0d-00e098032b8c (300 bytes)
+    Label: "Windows Boot Manager"
+[BootOrder] 8be4df61-93ca-11d2-aa0d-00e098032b8c (2 bytes)
+    Order: 0000
 [db] d719b2cb-3d3a-4596-a3bc-dad00e67656f (9783 bytes)
-    Cert #1:
-      Subject: CN=Microsoft Corporation UEFI CA 2011, O=Microsoft Corporation, L=Redmond, S=Washington, C=US
-      Issuer:  CN=Microsoft Corporation Third Party Marketplace Root, O=Microsoft Corporation, L=Redmond, S=Washington, C=US
-      Expires: 6/27/2026 2:32:45 PM
-    Cert #2:
-      Subject: CN=Windows UEFI CA 2023, O=Microsoft Corporation, C=US
-      Issuer:  CN=Microsoft Root Certificate Authority 2010, O=Microsoft Corporation, L=Redmond, S=Washington, C=US
-      Expires: 6/13/2035 12:08:29 PM
-    Cert #3:
-      Subject: CN=Microsoft Windows Production PCA 2011, O=Microsoft Corporation, L=Redmond, S=Washington, C=US
-      Issuer:  CN=Microsoft Root Certificate Authority 2010, O=Microsoft Corporation, L=Redmond, S=Washington, C=US
-      Expires: 10/19/2026 11:51:42 AM
-    Cert #4:
-      Subject: CN=GIGABYTE
-      Issuer:  CN=GIGABYTE
-      Expires: 9/29/2027 6:55:15 PM
-    Cert #5:
-      Subject: CN=GIGABYTE
-      Issuer:  CN=GIGABYTE
-      Expires: 9/4/2053 11:42:22 PM
-    Cert #6:
-      Subject: CN=Microsoft Option ROM UEFI CA 2023, O=Microsoft Corporation, C=US
-      Issuer:  CN=Microsoft RSA Devices Root CA 2021, O=Microsoft Corporation, C=US
-      Expires: 10/26/2038 12:12:20 PM
-    Cert #7:
-      Subject: CN=Microsoft UEFI CA 2023, O=Microsoft Corporation, C=US
-      Issuer:  CN=Microsoft RSA Devices Root CA 2021, O=Microsoft Corporation, C=US
-      Expires: 6/13/2038 12:31:47 PM
+    List Type: a5c059a1-94e4-4aa7-87b5-ab155c2bf072
+    Cert #1:
+      Subject:    CN=Microsoft Corporation UEFI CA 2011, O=Microsoft Corporation, L=Redmond, S=Washington, C=US
+      Issuer:     CN=Microsoft Corporation Third Party Marketplace Root, O=Microsoft Corporation, L=Redmond, S=Washington, C=US
+      Serial No:  6108D3C4000000000004
+      Algorithm:  sha256RSA
+      Valid From: 6/27/2011 2:22:45 PM
+      Expires:    6/27/2026 2:32:45 PM
+
+    List Type: a5c059a1-94e4-4aa7-87b5-ab155c2bf072
+    Cert #2:
+      Subject:    CN=Windows UEFI CA 2023, O=Microsoft Corporation, C=US
+      Issuer:     CN=Microsoft Root Certificate Authority 2010, O=Microsoft Corporation, L=Redmond, S=Washington, C=US
+      Serial No:  330000001A888B9800562284C100000000001A
+      Algorithm:  sha256RSA
+      Valid From: 6/13/2023 11:58:29 AM
+      Expires:    6/13/2035 12:08:29 PM
+
+    List Type: a5c059a1-94e4-4aa7-87b5-ab155c2bf072
+    Cert #3:
+      Subject:    CN=Microsoft Windows Production PCA 2011, O=Microsoft Corporation, L=Redmond, S=Washington, C=US
+      Issuer:     CN=Microsoft Root Certificate Authority 2010, O=Microsoft Corporation, L=Redmond, S=Washington, C=US
+      Serial No:  61077656000000000008
+      Algorithm:  sha256RSA
+      Valid From: 10/19/2011 11:41:42 AM
+      Expires:    10/19/2026 11:51:42 AM
+
+    List Type: a5c059a1-94e4-4aa7-87b5-ab155c2bf072
+    Cert #4:
+      Subject:    CN=GIGABYTE
+      Issuer:     CN=GIGABYTE
+      Serial No:  34CC1B4EF33DFD9648BB8CA68E671D78
+      Algorithm:  sha256RSA
+      Valid From: 9/29/2022 6:55:16 PM
+      Expires:    9/29/2027 6:55:15 PM
+
+    List Type: a5c059a1-94e4-4aa7-87b5-ab155c2bf072
+    Cert #5:
+      Subject:    CN=GIGABYTE
+      Issuer:     CN=GIGABYTE
+      Serial No:  888A6407A51B3A9849D28E290C2DB25C
+      Algorithm:  sha256RSA
+      Valid From: 9/4/2023 11:42:23 PM
+      Expires:    9/4/2053 11:42:22 PM
+
+    List Type: a5c059a1-94e4-4aa7-87b5-ab155c2bf072
+    Cert #6:
+      Subject:    CN=Microsoft Option ROM UEFI CA 2023, O=Microsoft Corporation, C=US
+      Issuer:     CN=Microsoft RSA Devices Root CA 2021, O=Microsoft Corporation, C=US
+      Serial No:  3300000017B3EC4D8F01E27005000000000017
+      Algorithm:  sha256RSA
+      Valid From: 10/26/2023 12:02:20 PM
+      Expires:    10/26/2038 12:12:20 PM
+
+    List Type: a5c059a1-94e4-4aa7-87b5-ab155c2bf072
+    Cert #7:
+      Subject:    CN=Microsoft UEFI CA 2023, O=Microsoft Corporation, C=US
+      Issuer:     CN=Microsoft RSA Devices Root CA 2021, O=Microsoft Corporation, C=US
+      Serial No:  330000001636BF36899F1575CC000000000016
+      Algorithm:  sha256RSA
+      Valid From: 6/13/2023 12:21:47 PM
+      Expires:    6/13/2038 12:31:47 PM
+
+[SetupMode] 8be4df61-93ca-11d2-aa0d-00e098032b8c (1 bytes)
+    Value: Disabled (0)
+[SecureBoot] 8be4df61-93ca-11d2-aa0d-00e098032b8c (1 bytes)
+    Value: Enabled (1)
+
+Done.
