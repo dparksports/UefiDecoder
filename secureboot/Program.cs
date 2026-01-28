@@ -19,12 +19,11 @@ namespace UefiDecoder
         static readonly Guid EFI_CERT_X509_GUID = new Guid("a5c059a1-94e4-4138-87ab-5a5cd152628f");
 
         // --- dbx Search Index ---
-        // Stores raw hash strings found in dbx
         static List<string> DbxHashIndex = new List<string>();
 
         static void Main(string[] args)
         {
-            Console.WriteLine("--- Antigravity UEFI Decoder v2.1 (dbx Pattern Search) ---\n");
+            Console.WriteLine("--- Antigravity UEFI Decoder v2.2 (Silent Indexing) ---\n");
 
             if (!PrivilegeManager.EnablePrivilege("SeSystemEnvironmentPrivilege"))
             {
@@ -43,14 +42,14 @@ namespace UefiDecoder
                 if (data == null) continue;
 
                 // --- 1. The Forbidden List (dbx) ---
-                // Requirement: Print ONLY hash keys, enable pattern search
+                // Behavior: Index ONLY, print tally ONLY.
                 if (v.Guid == EFI_IMAGE_SECURITY_DATABASE && v.Name == "dbx")
                 {
                     PrintHeader(v.Name, v.Guid, data.Length);
-                    ParseDbxOnly(data);
+                    ParseDbxSilent(data);
                 }
                 // --- 2. Other Security Lists (db, KEK, PK) ---
-                // Requirement: Keep existing deciphering (Certs)
+                // Behavior: Full Decipher (Certs)
                 else if (v.Guid == EFI_IMAGE_SECURITY_DATABASE && (v.Name == "db" || v.Name == "KEK" || v.Name == "PK"))
                 {
                     PrintHeader(v.Name, v.Guid, data.Length);
@@ -78,7 +77,7 @@ namespace UefiDecoder
             // --- Interactive dbx Search Mode ---
             Console.WriteLine(new string('-', 60));
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"\n[dbx Analysis] Indexed {DbxHashIndex.Count} hashes from the revocation list.");
+            Console.WriteLine($"\n[Analysis Complete] {DbxHashIndex.Count} hashes have been indexed from dbx.");
             Console.ResetColor();
             Console.WriteLine("Enter a partial hash pattern to search dbx (e.g. '459458' for BlackLotus):");
             Console.WriteLine("(Press Enter to exit)");
@@ -86,10 +85,9 @@ namespace UefiDecoder
             while (true)
             {
                 Console.Write("\nSearch dbx > ");
-                string input = Console.ReadLine()?.Trim().Replace(" ", "").Replace(":", "").ToUpper(); // Normalize input
+                string input = Console.ReadLine()?.Trim().Replace(" ", "").Replace(":", "").ToUpper();
                 if (string.IsNullOrEmpty(input)) break;
 
-                // Pattern Match
                 var matches = DbxHashIndex.Where(h => h.Contains(input)).ToList();
 
                 if (matches.Count > 0)
@@ -97,9 +95,8 @@ namespace UefiDecoder
                     Console.ForegroundColor = ConsoleColor.Green;
                     Console.WriteLine($"FOUND {matches.Count} MATCH(ES) in dbx:");
                     Console.ResetColor();
-                    foreach (var match in matches.Take(5)) // Limit output to 5 to avoid spamming
+                    foreach (var match in matches.Take(10)) 
                     {
-                        // Highlight the matching part
                         int index = match.IndexOf(input);
                         Console.Write("  Hash: " + match.Substring(0, index));
                         Console.ForegroundColor = ConsoleColor.Yellow;
@@ -107,7 +104,7 @@ namespace UefiDecoder
                         Console.ResetColor();
                         Console.WriteLine(match.Substring(index + input.Length));
                     }
-                    if (matches.Count > 5) Console.WriteLine($"  ...and {matches.Count - 5} more.");
+                    if (matches.Count > 10) Console.WriteLine($"  ...and {matches.Count - 10} more.");
                 }
                 else
                 {
@@ -127,8 +124,8 @@ namespace UefiDecoder
             Console.ResetColor();
         }
 
-        // --- Logic 1: dbx Specialized Parser (Hashes Only) ---
-        static void ParseDbxOnly(byte[] data)
+        // --- Logic 1: Silent dbx Indexer ---
+        static void ParseDbxSilent(byte[] data)
         {
             int offset = 0;
             int count = 0;
@@ -160,21 +157,20 @@ namespace UefiDecoder
                             byte[] payload = new byte[payloadSize];
                             Array.Copy(data, currentSigOffset + 16, payload, 0, payloadSize);
 
-                            // Only process SHA256 for dbx output as requested
                             if (typeGuid == EFI_CERT_SHA256_GUID)
                             {
                                 string hashString = BitConverter.ToString(payload).Replace("-", "");
-                                count++;
-                                // Add to global index
                                 DbxHashIndex.Add(hashString);
-                                // Print immediate output
-                                Console.WriteLine($"    Hash: {hashString}");
+                                count++;
                             }
                         }
                         currentSigOffset += signatureSize;
                     }
                     offset += listSize;
                 }
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"    -> Indexed {count} SHA-256 hashes (Hidden from display).");
+                Console.ResetColor();
             }
             catch (Exception ex)
             {
@@ -182,7 +178,7 @@ namespace UefiDecoder
             }
         }
 
-        // --- Logic 2: Standard Parser (Certificates) for db/KEK/PK ---
+        // --- Logic 2: Standard Parser (Certs) ---
         static void ParseSignatureListStandard(byte[] data)
         {
             int offset = 0;
@@ -233,8 +229,6 @@ namespace UefiDecoder
                                     Console.WriteLine("    [Invalid X.509 Data]");
                                 }
                             }
-                            // We purposefully ignore raw hashes here to keep db/KEK/PK output clean 
-                            // unless they are certs, per standard usage.
                         }
                         currentSigOffset += signatureSize;
                     }
@@ -247,7 +241,7 @@ namespace UefiDecoder
             }
         }
 
-        // --- Helpers (Unchanged) ---
+        // --- Helpers ---
         static void ParseBoolean(byte[] data)
         {
             if (data.Length > 0)
@@ -284,7 +278,7 @@ namespace UefiDecoder
             Console.WriteLine($"    Label: \"{sb}\"");
         }
 
-        // --- P/Invoke Logic (Unchanged) ---
+        // --- P/Invoke Logic ---
         static byte[] GetUefiVariableEx(string name, string guid, out uint attributes)
         {
             attributes = 0;
@@ -296,7 +290,7 @@ namespace UefiDecoder
                 if (result == 0 && Marshal.GetLastWin32Error() == 122) 
                 {
                     Marshal.FreeHGlobal(buffer);
-                    size = 65536; // 64KB Buffer for large dbx
+                    size = 65536; 
                     buffer = Marshal.AllocHGlobal((int)size);
                     result = NativeMethods.GetFirmwareEnvironmentVariableEx(name, guid, buffer, size, out attributes);
                 }
