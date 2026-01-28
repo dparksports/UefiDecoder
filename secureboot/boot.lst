@@ -1,0 +1,31 @@
+still not printing these:
+
+[db] d719b2cb-3d3a-4596-a3bc-dad00e67656f (9783 bytes)
+    Cert #1:
+      Subject: CN=Microsoft Corporation UEFI CA 2011, O=Microsoft Corporation, L=Redmond, S=Washington, C=US
+      Issuer:  CN=Microsoft Corporation Third Party Marketplace Root, O=Microsoft Corporation, L=Redmond, S=Washington, C=US
+      Expires: 6/27/2026 2:32:45 PM
+    Cert #2:
+      Subject: CN=Windows UEFI CA 2023, O=Microsoft Corporation, C=US
+      Issuer:  CN=Microsoft Root Certificate Authority 2010, O=Microsoft Corporation, L=Redmond, S=Washington, C=US
+      Expires: 6/13/2035 12:08:29 PM
+    Cert #3:
+      Subject: CN=Microsoft Windows Production PCA 2011, O=Microsoft Corporation, L=Redmond, S=Washington, C=US
+      Issuer:  CN=Microsoft Root Certificate Authority 2010, O=Microsoft Corporation, L=Redmond, S=Washington, C=US
+      Expires: 10/19/2026 11:51:42 AM
+    Cert #4:
+      Subject: CN=GIGABYTE
+      Issuer:  CN=GIGABYTE
+      Expires: 9/29/2027 6:55:15 PM
+    Cert #5:
+      Subject: CN=GIGABYTE
+      Issuer:  CN=GIGABYTE
+      Expires: 9/4/2053 11:42:22 PM
+    Cert #6:
+      Subject: CN=Microsoft Option ROM UEFI CA 2023, O=Microsoft Corporation, C=US
+      Issuer:  CN=Microsoft RSA Devices Root CA 2021, O=Microsoft Corporation, C=US
+      Expires: 10/26/2038 12:12:20 PM
+    Cert #7:
+      Subject: CN=Microsoft UEFI CA 2023, O=Microsoft Corporation, C=US
+      Issuer:  CN=Microsoft RSA Devices Root CA 2021, O=Microsoft Corporation, C=US
+      Expires: 6/13/2038 12:31:47 PM

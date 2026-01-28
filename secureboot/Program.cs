@@ -4,57 +4,57 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
-using System.Linq;
 
 namespace UefiDecoder
 {
     class Program
     {
-        // --- Known GUIDs ---
+        // --- Known Variable GUIDs ---
         static readonly Guid EFI_GLOBAL_VARIABLE = new Guid("8be4df61-93ca-11d2-aa0d-00e098032b8c");
         static readonly Guid EFI_IMAGE_SECURITY_DATABASE = new Guid("d719b2cb-3d3a-4596-a3bc-dad00e67656f");
 
         // --- Signature Type GUIDs ---
-        static readonly Guid EFI_CERT_SHA256_GUID = new Guid("c1c41626-504c-4092-aca9-41f936934328");
+        // Standard X.509 (The one defined in UEFI Spec)
         static readonly Guid EFI_CERT_X509_GUID = new Guid("a5c059a1-94e4-4138-87ab-5a5cd152628f");
-
-        // --- Search Index ---
-        static List<string> DbxHashIndex = new List<string>();
+        // "Mystery" X.509 (Found in your specific Gigabyte Hex Dump - 0x4AA7 variant)
+        static readonly Guid EFI_CERT_X509_GUID_ALT = new Guid("a5c059a1-94e4-4aa7-87b5-ab155c2bf072");
+        // SHA-256 (For dbx)
+        static readonly Guid EFI_CERT_SHA256_GUID = new Guid("c1c41626-504c-4092-aca9-41f936934328");
 
         static void Main(string[] args)
         {
             Console.Clear();
-            Console.ForegroundColor = ConsoleColor.Cyan; // <--- LOOK FOR THIS COLOR
-            Console.WriteLine("--- Antigravity UEFI Decoder v2.5 (DEEP INSPECTION MODE) ---");
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("--- Antigravity UEFI Decoder v3.0 (Robust Mode) ---");
             Console.ResetColor();
-            Console.WriteLine("Index dbx... Deciphering Certs...\n");
+            Console.WriteLine("Scanning NVRAM...\n");
 
             if (!PrivilegeManager.EnablePrivilege("SeSystemEnvironmentPrivilege"))
             {
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("ACCESS DENIED: Please run as Administrator.");
+                Console.WriteLine("ACCESS DENIED: Run as Administrator.");
                 Console.ResetColor();
                 return;
             }
 
             var variables = EnumUefiVariables();
-            
+
             foreach (var v in variables)
             {
                 byte[] data = GetUefiVariableEx(v.Name, v.Guid.ToString("B"), out uint attrs);
                 if (data == null) continue;
 
-                // --- 1. Forbidden List (dbx) -> Index Only ---
+                // --- 1. The Forbidden List (dbx) -> Tally Only ---
                 if (v.Guid == EFI_IMAGE_SECURITY_DATABASE && v.Name == "dbx")
                 {
                     PrintHeader(v.Name, v.Guid, data.Length);
-                    ParseDbxSilent(data);
+                    ParseDbxTally(data);
                 }
-                // --- 2. Allowed Lists (db, KEK, PK) -> DEEP INSPECT ---
+                // --- 2. Allowed Lists (db, KEK, PK) -> Deep Inspect ---
                 else if (v.Guid == EFI_IMAGE_SECURITY_DATABASE && (v.Name == "db" || v.Name == "KEK" || v.Name == "PK"))
                 {
                     PrintHeader(v.Name, v.Guid, data.Length);
-                    ParseSignatureListDeep(data); // <--- This function prints attributes
+                    ParseSignatureListDeep(data);
                 }
                 // --- 3. Boot Logic ---
                 else if (v.Name == "BootOrder" && v.Guid == EFI_GLOBAL_VARIABLE)
@@ -75,45 +75,7 @@ namespace UefiDecoder
                 }
             }
 
-            // --- Interactive Search ---
-            Console.WriteLine(new string('-', 60));
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"\n[Analysis Complete] {DbxHashIndex.Count} hashes indexed from dbx.");
-            Console.ResetColor();
-            Console.WriteLine("Enter a partial hash pattern to search dbx (e.g. '459458' for BlackLotus):");
-            Console.WriteLine("(Press Enter to exit)");
-
-            while (true)
-            {
-                Console.Write("\nSearch dbx > ");
-                string input = Console.ReadLine()?.Trim().Replace(" ", "").Replace(":", "").ToUpper();
-                if (string.IsNullOrEmpty(input)) break;
-
-                var matches = DbxHashIndex.Where(h => h.Contains(input)).ToList();
-
-                if (matches.Count > 0)
-                {
-                    Console.ForegroundColor = ConsoleColor.Green;
-                    Console.WriteLine($"FOUND {matches.Count} MATCH(ES) in dbx:");
-                    Console.ResetColor();
-                    foreach (var match in matches.Take(10)) 
-                    {
-                        int index = match.IndexOf(input);
-                        Console.Write("  Hash: " + match.Substring(0, index));
-                        Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.Write(match.Substring(index, input.Length));
-                        Console.ResetColor();
-                        Console.WriteLine(match.Substring(index + input.Length));
-                    }
-                    if (matches.Count > 10) Console.WriteLine($"  ...and {matches.Count - 10} more.");
-                }
-                else
-                {
-                    Console.ForegroundColor = ConsoleColor.DarkGray;
-                    Console.WriteLine("No matches found in dbx.");
-                    Console.ResetColor();
-                }
-            }
+            Console.WriteLine("\nDone.");
         }
 
         static void PrintHeader(string name, Guid guid, int size)
@@ -125,7 +87,8 @@ namespace UefiDecoder
             Console.ResetColor();
         }
 
-        static void ParseDbxSilent(byte[] data)
+        // --- Logic: Count Hashes Only ---
+        static void ParseDbxTally(byte[] data)
         {
             int offset = 0;
             int count = 0;
@@ -137,38 +100,29 @@ namespace UefiDecoder
                     byte[] guidBytes = new byte[16];
                     Array.Copy(data, offset, guidBytes, 0, 16);
                     Guid typeGuid = new Guid(guidBytes);
+
                     int listSize = BitConverter.ToInt32(data, offset + 16);
                     int headerSize = BitConverter.ToInt32(data, offset + 20);
                     int signatureSize = BitConverter.ToInt32(data, offset + 24);
                     int currentSigOffset = offset + 28 + headerSize;
                     int endOfList = offset + listSize;
 
-                    while (currentSigOffset < endOfList)
+                    // Calculate items based on size rather than looping to be faster
+                    if (signatureSize > 0)
                     {
-                        if (currentSigOffset + 16 > data.Length) break;
-                        int payloadSize = signatureSize - 16;
-                        if (payloadSize > 0 && currentSigOffset + 16 + payloadSize <= data.Length)
-                        {
-                            if (typeGuid == EFI_CERT_SHA256_GUID)
-                            {
-                                byte[] payload = new byte[payloadSize];
-                                Array.Copy(data, currentSigOffset + 16, payload, 0, payloadSize);
-                                DbxHashIndex.Add(BitConverter.ToString(payload).Replace("-", ""));
-                                count++;
-                            }
-                        }
-                        currentSigOffset += signatureSize;
+                        int payloadArea = endOfList - currentSigOffset;
+                        if (payloadArea > 0) count += payloadArea / signatureSize;
                     }
                     offset += listSize;
                 }
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"    -> Indexed {count} SHA-256 hashes (Hidden).");
+                Console.WriteLine($"    -> Contains {count} revocation entries (Hashes).");
                 Console.ResetColor();
             }
             catch {}
         }
 
-        // --- THE DEEP PARSER ---
+        // --- Logic: Deep Cert Parser (Robust) ---
         static void ParseSignatureListDeep(byte[] data)
         {
             int offset = 0;
@@ -180,9 +134,15 @@ namespace UefiDecoder
                 {
                     if (offset + 28 > data.Length) break; 
 
+                    // 1. Read the GUID of this list
                     byte[] guidBytes = new byte[16];
                     Array.Copy(data, offset, guidBytes, 0, 16);
                     Guid typeGuid = new Guid(guidBytes);
+
+                    // Debug print the GUID so we verify what we are looking at
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"    List Type: {typeGuid}");
+                    Console.ResetColor();
 
                     int listSize = BitConverter.ToInt32(data, offset + 16);
                     int headerSize = BitConverter.ToInt32(data, offset + 20);
@@ -201,7 +161,9 @@ namespace UefiDecoder
                             byte[] payload = new byte[payloadSize];
                             Array.Copy(data, currentSigOffset + 16, payload, 0, payloadSize);
 
-                            if (typeGuid == EFI_CERT_X509_GUID)
+                            // CHECK 1: Standard X509
+                            // CHECK 2: Your Firmware's "Mystery" GUID
+                            if (typeGuid == EFI_CERT_X509_GUID || typeGuid == EFI_CERT_X509_GUID_ALT)
                             {
                                 try
                                 {
@@ -212,34 +174,24 @@ namespace UefiDecoder
                                     Console.ForegroundColor = ConsoleColor.White;
                                     Console.WriteLine($"      Subject:    {cert.Subject}");
                                     Console.WriteLine($"      Issuer:     {cert.Issuer}");
-                                    // THESE ARE THE NEW FIELDS
                                     Console.WriteLine($"      Serial No:  {cert.SerialNumber}");
-                                    Console.WriteLine($"      Thumbprint: {cert.Thumbprint}");
                                     Console.ResetColor();
                                     
                                     Console.ForegroundColor = ConsoleColor.DarkGray;
-                                    Console.WriteLine($"      Algorithm:  {cert.SignatureAlgorithm.FriendlyName} ({cert.SignatureAlgorithm.Value})");
+                                    Console.WriteLine($"      Algorithm:  {cert.SignatureAlgorithm.FriendlyName}");
                                     Console.WriteLine($"      Valid From: {cert.NotBefore}");
                                     Console.WriteLine($"      Expires:    {cert.NotAfter}");
                                     Console.ResetColor();
-
-                                    if (cert.Extensions.Count > 0)
-                                    {
-                                        Console.WriteLine($"      Extensions ({cert.Extensions.Count}):");
-                                        foreach (X509Extension ext in cert.Extensions)
-                                        {
-                                            Console.Write($"        - {ext.Oid.FriendlyName}: ");
-                                            string rawFmt = ext.Format(false);
-                                            if (rawFmt.Length > 60) rawFmt = rawFmt.Substring(0, 57) + "...";
-                                            Console.WriteLine(rawFmt);
-                                        }
-                                    }
                                     Console.WriteLine();
                                 }
-                                catch (Exception ex)
+                                catch
                                 {
-                                    Console.WriteLine($"    [Parse Error: {ex.Message}]");
+                                    Console.WriteLine("    [Data found, but not a valid X.509 Cert]");
                                 }
+                            }
+                            else
+                            {
+                                // Unknown GUID - skip silently or print if needed
                             }
                         }
                         currentSigOffset += signatureSize;
@@ -253,7 +205,6 @@ namespace UefiDecoder
             }
         }
 
-        // --- Helpers ---
         static void ParseBoolean(byte[] data)
         {
             if (data.Length > 0)
@@ -290,7 +241,6 @@ namespace UefiDecoder
             Console.WriteLine($"    Label: \"{sb}\"");
         }
 
-        // --- P/Invoke Logic ---
         static byte[] GetUefiVariableEx(string name, string guid, out uint attributes)
         {
             attributes = 0;
