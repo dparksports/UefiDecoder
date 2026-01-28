@@ -24,10 +24,10 @@ namespace UefiDecoder
         static void Main(string[] args)
         {
             Console.Clear();
-            Console.ForegroundColor = ConsoleColor.Magenta;
-            Console.WriteLine("--- Antigravity UEFI Decoder v2.4 (FORCE DEEP INSPECT) ---");
+            Console.ForegroundColor = ConsoleColor.Cyan; // <--- LOOK FOR THIS COLOR
+            Console.WriteLine("--- Antigravity UEFI Decoder v2.5 (DEEP INSPECTION MODE) ---");
             Console.ResetColor();
-            Console.WriteLine("If you do not see Serial Numbers below, the code did not rebuild.\n");
+            Console.WriteLine("Index dbx... Deciphering Certs...\n");
 
             if (!PrivilegeManager.EnablePrivilege("SeSystemEnvironmentPrivilege"))
             {
@@ -38,25 +38,23 @@ namespace UefiDecoder
             }
 
             var variables = EnumUefiVariables();
-            Console.WriteLine($"Scanning {variables.Count} variables...\n");
-
+            
             foreach (var v in variables)
             {
                 byte[] data = GetUefiVariableEx(v.Name, v.Guid.ToString("B"), out uint attrs);
                 if (data == null) continue;
 
-                // --- 1. The Forbidden List (dbx) ---
+                // --- 1. Forbidden List (dbx) -> Index Only ---
                 if (v.Guid == EFI_IMAGE_SECURITY_DATABASE && v.Name == "dbx")
                 {
                     PrintHeader(v.Name, v.Guid, data.Length);
                     ParseDbxSilent(data);
                 }
-                // --- 2. Allowed Lists (db, KEK, PK) ---
-                // CRITICAL: Must call ParseSignatureListDeep
+                // --- 2. Allowed Lists (db, KEK, PK) -> DEEP INSPECT ---
                 else if (v.Guid == EFI_IMAGE_SECURITY_DATABASE && (v.Name == "db" || v.Name == "KEK" || v.Name == "PK"))
                 {
                     PrintHeader(v.Name, v.Guid, data.Length);
-                    ParseSignatureListDeep(data); 
+                    ParseSignatureListDeep(data); // <--- This function prints attributes
                 }
                 // --- 3. Boot Logic ---
                 else if (v.Name == "BootOrder" && v.Guid == EFI_GLOBAL_VARIABLE)
@@ -69,7 +67,7 @@ namespace UefiDecoder
                     PrintHeader(v.Name, v.Guid, data.Length);
                     ParseBootOption(data);
                 }
-                // --- 4. State Flags ---
+                // --- 4. Flags ---
                 else if (v.Name == "SecureBoot" || v.Name == "SetupMode")
                 {
                     PrintHeader(v.Name, v.Guid, data.Length);
@@ -129,7 +127,6 @@ namespace UefiDecoder
 
         static void ParseDbxSilent(byte[] data)
         {
-            // Simplified for brevity - purely indexing
             int offset = 0;
             int count = 0;
             try 
@@ -208,7 +205,6 @@ namespace UefiDecoder
                             {
                                 try
                                 {
-                                    // FORCE LOAD CERTIFICATE
                                     var cert = new X509Certificate2(payload);
                                     certCount++;
                                     
@@ -216,6 +212,7 @@ namespace UefiDecoder
                                     Console.ForegroundColor = ConsoleColor.White;
                                     Console.WriteLine($"      Subject:    {cert.Subject}");
                                     Console.WriteLine($"      Issuer:     {cert.Issuer}");
+                                    // THESE ARE THE NEW FIELDS
                                     Console.WriteLine($"      Serial No:  {cert.SerialNumber}");
                                     Console.WriteLine($"      Thumbprint: {cert.Thumbprint}");
                                     Console.ResetColor();
@@ -226,14 +223,12 @@ namespace UefiDecoder
                                     Console.WriteLine($"      Expires:    {cert.NotAfter}");
                                     Console.ResetColor();
 
-                                    // EXTENSIONS
                                     if (cert.Extensions.Count > 0)
                                     {
                                         Console.WriteLine($"      Extensions ({cert.Extensions.Count}):");
                                         foreach (X509Extension ext in cert.Extensions)
                                         {
                                             Console.Write($"        - {ext.Oid.FriendlyName}: ");
-                                            // Handle formatting cleanly
                                             string rawFmt = ext.Format(false);
                                             if (rawFmt.Length > 60) rawFmt = rawFmt.Substring(0, 57) + "...";
                                             Console.WriteLine(rawFmt);
