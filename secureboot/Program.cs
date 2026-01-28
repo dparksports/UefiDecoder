@@ -41,7 +41,7 @@ namespace UefiDecoder
 
             foreach (var v in variables)
             {
-                byte[] data = GetUefiVariableEx(v.Name, v.Guid.ToString("B"), out uint attrs);
+                byte[]? data = GetUefiVariableEx(v.Name, v.Guid.ToString("B"), out uint attrs);
                 if (data == null) continue;
 
                 // --- 1. The Forbidden List (dbx) -> Tally Only ---
@@ -167,7 +167,10 @@ namespace UefiDecoder
                             {
                                 try
                                 {
+#pragma warning disable SYSLIB0057 // Use obsolete X509Certificate2 constructor for simplicity
                                     var cert = new X509Certificate2(payload);
+#pragma warning restore SYSLIB0057
+
                                     certCount++;
                                     
                                     Console.WriteLine($"    Cert #{certCount}:");
@@ -241,7 +244,7 @@ namespace UefiDecoder
             Console.WriteLine($"    Label: \"{sb}\"");
         }
 
-        static byte[] GetUefiVariableEx(string name, string guid, out uint attributes)
+        static byte[]? GetUefiVariableEx(string name, string guid, out uint attributes)
         {
             attributes = 0;
             uint size = 1024; 
@@ -267,7 +270,7 @@ namespace UefiDecoder
             return null;
         }
 
-        class UefiVar { public string Name; public Guid Guid; }
+        class UefiVar { public string Name = string.Empty; public Guid Guid; }
 
         static List<UefiVar> EnumUefiVariables()
         {
@@ -287,8 +290,11 @@ namespace UefiDecoder
                         byte[] guidBytes = new byte[16];
                         Marshal.Copy(new IntPtr(current.ToInt64() + 4), guidBytes, 0, 16);
                         IntPtr namePtr = new IntPtr(current.ToInt64() + 20);
-                        string name = Marshal.PtrToStringUni(namePtr);
-                        list.Add(new UefiVar { Name = name, Guid = new Guid(guidBytes) });
+                        string? name = Marshal.PtrToStringUni(namePtr);
+                        if (name != null)
+                        {
+                            list.Add(new UefiVar { Name = name, Guid = new Guid(guidBytes) });
+                        }
                         if (nextOffset == 0) break;
                         current = new IntPtr(current.ToInt64() + nextOffset);
                     }
@@ -301,8 +307,9 @@ namespace UefiDecoder
 
     public static class PrivilegeManager
     {
-        public static bool EnablePrivilege(string privilegeName)
+        public static bool EnablePrivilege(string? privilegeName)
         {
+            if (privilegeName == null) return false;
             IntPtr tokenHandle = IntPtr.Zero;
             try
             {
@@ -325,7 +332,7 @@ namespace UefiDecoder
         [DllImport("advapi32.dll", SetLastError = true)]
         public static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
         [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Auto)]
-        public static extern bool LookupPrivilegeValue(string lpSystemName, string lpName, out long lpLuid);
+        public static extern bool LookupPrivilegeValue(string? lpSystemName, string lpName, out long lpLuid);
         [DllImport("advapi32.dll", SetLastError = true)]
         public static extern bool AdjustTokenPrivileges(IntPtr TokenHandle, bool DisableAllPrivileges, ref TOKEN_PRIVILEGES NewState, uint BufferLength, IntPtr PreviousState, IntPtr ReturnLength);
         [DllImport("kernel32.dll")]
