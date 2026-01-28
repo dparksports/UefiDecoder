@@ -1,295 +1,233 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 
-namespace SecureBootParser
+namespace UefiDecoder
 {
     class Program
     {
-        // Attribute Constants
+        // --- Known GUIDs for Context ---
+        static readonly Guid EFI_GLOBAL_VARIABLE = new Guid("8be4df61-93ca-11d2-aa0d-00e098032b8c");
+        static readonly Guid EFI_IMAGE_SECURITY_DATABASE = new Guid("d719b2cb-3d3a-4596-a3bc-dad00e67656f");
+        
+        // --- Attribute Constants ---
         const uint EFI_VARIABLE_NON_VOLATILE = 0x00000001;
         const uint EFI_VARIABLE_BOOTSERVICE_ACCESS = 0x00000002;
         const uint EFI_VARIABLE_RUNTIME_ACCESS = 0x00000004;
-        const uint EFI_VARIABLE_AUTHENTICATED_WRITE_ACCESS = 0x00000010;
-        const uint EFI_VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS = 0x00000020;
-        const uint EFI_VARIABLE_APPEND_WRITE = 0x00000040;
 
         static void Main(string[] args)
         {
-            Console.WriteLine("Acquiring SeSystemEnvironmentPrivilege...");
+            Console.WriteLine("--- Antigravity UEFI Decoder ---\n");
+
             if (!PrivilegeManager.EnablePrivilege("SeSystemEnvironmentPrivilege"))
             {
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("FAILED: Access Denied. Run as Administrator.");
+                Console.WriteLine("ACCESS DENIED: Please run this terminal as Administrator.");
+                Console.ResetColor();
                 return;
             }
 
-            Console.WriteLine("Enumerating all UEFI variables...");
             var variables = EnumUefiVariables();
-            
-            Console.WriteLine($"Found {variables.Count} variables.\n");
+            Console.WriteLine($"Found {variables.Count} variables. Deciphering contents...\n");
 
             foreach (var v in variables)
             {
-                PrintVariableInfo(v.Name, v.Guid.ToString("B"));
+                byte[] data = GetUefiVariableEx(v.Name, v.Guid.ToString("B"), out uint attrs);
+                if (data == null) continue;
+
+                // --- The "Understanding" Logic ---
+                // We decide how to print based on the Name and GUID
+                
+                if (v.Guid == EFI_IMAGE_SECURITY_DATABASE && (v.Name == "db" || v.Name == "dbx" || v.Name == "KEK" || v.Name == "PK"))
+                {
+                    PrintHeader(v.Name, v.Guid, data.Length);
+                    ParseSignatureList(data);
+                }
+                else if (v.Name == "BootOrder" && v.Guid == EFI_GLOBAL_VARIABLE)
+                {
+                    PrintHeader(v.Name, v.Guid, data.Length);
+                    ParseBootOrder(data);
+                }
+                else if (v.Name.StartsWith("Boot0") && v.Guid == EFI_GLOBAL_VARIABLE)
+                {
+                    PrintHeader(v.Name, v.Guid, data.Length);
+                    ParseBootOption(data);
+                }
+                else if (v.Name == "SecureBoot" || v.Name == "SetupMode" || v.Name == "AuditMode" || v.Name == "DeployedMode")
+                {
+                    PrintHeader(v.Name, v.Guid, data.Length);
+                    ParseBoolean(data);
+                }
+                // (Optional) Add more custom parsers here
             }
 
-            Console.ForegroundColor = ConsoleColor.White;
-            Console.WriteLine("\nDone. Press any key to exit.");
-            Console.ReadKey();
+            Console.WriteLine("\nDone.");
         }
 
-        static void PrintVariableInfo(string name, string guidString)
+        static void PrintHeader(string name, Guid guid, int size)
         {
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"Name: {name}");
+            Console.Write($"[{name}] ");
             Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine($"Guid: {guidString}");
+            Console.WriteLine($"{guid} ({size} bytes)");
+            Console.ResetColor();
+        }
 
-            uint attributes = 0;
-            byte[] data = GetUefiVariableEx(name, guidString, out attributes);
+        // --- Decoders ---
 
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.Write("Attributes: ");
-            if (data != null)
+        static void ParseBoolean(byte[] data)
+        {
+            if (data.Length > 0)
             {
-                var attrs = new List<string>();
-                if ((attributes & EFI_VARIABLE_NON_VOLATILE) != 0) attrs.Add("NV");
-                if ((attributes & EFI_VARIABLE_BOOTSERVICE_ACCESS) != 0) attrs.Add("BS");
-                if ((attributes & EFI_VARIABLE_RUNTIME_ACCESS) != 0) attrs.Add("RT");
-                if ((attributes & EFI_VARIABLE_AUTHENTICATED_WRITE_ACCESS) != 0) attrs.Add("AUTH");
-                if ((attributes & EFI_VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS) != 0) attrs.Add("TIME_AUTH");
-                
-                Console.WriteLine(string.Join(" | ", attrs) + $" (0x{attributes:X})");
-                Console.ForegroundColor = ConsoleColor.Gray;
-                Console.WriteLine($"Size: {data.Length} bytes");
-
-                Console.ForegroundColor = ConsoleColor.White;
-                Console.Write("Value: ");
-
-                if (IsBooleanVariable(name))
-                {
-                    PrintBooleanValue(data);
-                }
-                else if (name.Equals("BootOrder", StringComparison.OrdinalIgnoreCase))
-                {
-                    PrintBootOrder(data);
-                }
-                else if (IsBootOption(name))
-                {
-                    PrintBootOption(data);
-                }
-                else if (!TryPrintString(data))
-                {
-                    Console.WriteLine();
-                    PrintHexDump(data);
-                }
+                bool val = data[0] == 1;
+                Console.ForegroundColor = val ? ConsoleColor.Green : ConsoleColor.Yellow;
+                Console.WriteLine($"    Value: {(val ? "Enabled (1)" : "Disabled (0)")}");
+                Console.ResetColor();
             }
-            else
+        }
+
+        static void ParseBootOrder(byte[] data)
+        {
+            Console.Write("    Order: ");
+            for (int i = 0; i < data.Length; i += 2)
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("Error reading variable or Empty");
+                if (i + 1 < data.Length)
+                {
+                    ushort id = BitConverter.ToUInt16(data, i);
+                    Console.Write($"{id:X4} ");
+                }
             }
             Console.WriteLine();
         }
 
-        static bool IsBooleanVariable(string name)
+        static void ParseBootOption(byte[] data)
         {
-            return name.Equals("SecureBoot", StringComparison.OrdinalIgnoreCase) ||
-                   name.Equals("SetupMode", StringComparison.OrdinalIgnoreCase) ||
-                   name.Equals("AuditMode", StringComparison.OrdinalIgnoreCase) ||
-                   name.Equals("DeployedMode", StringComparison.OrdinalIgnoreCase);
-        }
-
-        static bool IsBootOption(string name)
-        {
-            return name.Length == 8 && name.StartsWith("Boot", StringComparison.OrdinalIgnoreCase) && 
-                   int.TryParse(name.Substring(4), System.Globalization.NumberStyles.HexNumber, null, out _);
-        }
-
-        static void PrintBooleanValue(byte[] data)
-        {
-            if (data.Length == 1)
-            {
-                Console.WriteLine(data[0] == 1 ? "Enabled (1)" : "Disabled (0)");
-            }
-            else
-            {
-                Console.WriteLine($"INVALID BOOL (Len: {data.Length})");
-                PrintHexDump(data);
-            }
-        }
-
-        static void PrintBootOrder(byte[] data)
-        {
-            if (data.Length % 2 != 0)
-            {
-                Console.WriteLine("Invalid BootOrder length");
-                PrintHexDump(data);
-                return;
-            }
-
-            var order = new List<string>();
-            for (int i = 0; i < data.Length; i += 2)
-            {
-                ushort id = BitConverter.ToUInt16(data, i);
-                order.Add($"{id:X4}");
-            }
-            Console.WriteLine(string.Join(", ", order));
-        }
-
-        static void PrintBootOption(byte[] data)
-        {
-            // EFI_LOAD_OPTION: Attributes(4) + FilePathListLength(2) + Description(NullTerminatedString) + ...
-            if (data.Length < 6)
-            {
-                Console.WriteLine("Invalid Boot Option Data");
-                PrintHexDump(data);
-                return;
-            }
-
-            try
-            {
-                // We just want the description
-                // Skip Attributes (4 bytes) and FilePathListLength (2 bytes)
-                // The existing code request said: "Skip the Attributes (4 bytes) and FilePathListLength (2 bytes) to extract and display the human-readable Description string"
-                
-                int index = 6;
-                var sb = new StringBuilder();
-                while (index < data.Length - 1)
-                {
-                    char c = BitConverter.ToChar(data, index);
-                    if (c == '\0') break;
-                    sb.Append(c);
-                    index += 2;
-                }
-                Console.WriteLine(sb.ToString());
-            }
-            catch
-            {
-                Console.WriteLine("Error parsing Boot Option");
-                PrintHexDump(data);
-            }
-        }
-
-        static bool TryPrintString(byte[] data)
-        {
-            // Simple heuristic check
-            // 1. Try UTF-16 (Unicode) - specific to UEFI
-            // 2. Try ASCII 
+            // EFI_LOAD_OPTION Structure:
+            // UINT32 Attributes;
+            // UINT16 FilePathListLength;
+            // CHAR16 Description[]; <-- Null terminated
+            // EFI_DEVICE_PATH_PROTOCOL FilePathList[];
             
-            // UEFI uses UTF-16 mostly. Let's look for nulls in odd positions for simple text?
-            // Or just try to convert and see if it looks readable.
+            if (data.Length < 6) return;
+
+            // Skip Attributes (4) + PathLength (2) = 6 bytes
+            StringBuilder sb = new StringBuilder();
+            int i = 6;
+            while (i < data.Length)
+            {
+                char c = BitConverter.ToChar(data, i);
+                if (c == 0) break;
+                sb.Append(c);
+                i += 2;
+            }
             
-            if (data.Length == 0) return true;
-
-            // Check for pure ASCII printable (plus null terminator)
-            bool isAscii = true;
-            int printableAscii = 0;
-            foreach (byte b in data)
-            {
-                if (b == 0) continue;
-                if (b < 32 || b > 126) { isAscii = false; break; } // Not standard printable
-                printableAscii++;
-            }
-
-            if (isAscii && printableAscii > 0)
-            {
-                Console.WriteLine(Encoding.ASCII.GetString(data).Trim('\0'));
-                return true;
-            }
-
-            // Check for UTF-16 (Unicode)
-            // Should be even length
-            if (data.Length % 2 == 0)
-            {
-                string s = Encoding.Unicode.GetString(data);
-                // Check if string contains mostly printable characters
-                int printable = 0;
-                bool valid = true;
-                foreach (char c in s)
-                {
-                    if (c == '\0') continue;
-                    if (char.IsControl(c) && c != '\t' && c != '\n' && c != '\r') { valid = false; break; }
-                    printable++;
-                }
-
-                if (valid && printable > 0)
-                {
-                    Console.WriteLine(s.Trim('\0'));
-                    return true;
-                }
-            }
-
-            return false;
+            Console.WriteLine($"    Label: \"{sb}\"");
         }
 
-        static void PrintHexDump(byte[] data)
+        static void ParseSignatureList(byte[] data)
         {
-            for (int i = 0; i < data.Length; i += 16)
+            // EFI_SIGNATURE_LIST structure
+            int offset = 0;
+            int certCount = 0;
+
+            try 
             {
-                Console.Write($"{i:X4}: ");
-                // Hex
-                for (int j = 0; j < 16; j++)
+                while (offset < data.Length)
                 {
-                    if (i + j < data.Length) Console.Write($"{data[i + j]:X2} ");
-                    else Console.Write("   ");
-                }
-                Console.Write("  ");
-                // ASCII
-                for (int j = 0; j < 16; j++)
-                {
-                    if (i + j < data.Length)
+                    if (offset + 28 > data.Length) break; // Safety check
+
+                    // 1. Signature Type GUID (16 bytes)
+                    byte[] guidBytes = new byte[16];
+                    Array.Copy(data, offset, guidBytes, 0, 16);
+                    Guid typeGuid = new Guid(guidBytes);
+
+                    // 2. List Size (4 bytes)
+                    int listSize = BitConverter.ToInt32(data, offset + 16);
+                    
+                    // 3. Header Size (4 bytes)
+                    int headerSize = BitConverter.ToInt32(data, offset + 20);
+
+                    // 4. Signature Size (4 bytes)
+                    int signatureSize = BitConverter.ToInt32(data, offset + 24);
+
+                    // Parse the Signatures in this list
+                    int currentSigOffset = offset + 28 + headerSize; // Skip header
+                    int endOfList = offset + listSize;
+
+                    while (currentSigOffset < endOfList)
                     {
-                        byte b = data[i + j];
-                        Console.Write((b >= 32 && b <= 126) ? (char)b : '.');
+                        // EFI_SIGNATURE_DATA
+                        // First 16 bytes is Signature Owner GUID
+                        // The rest is the data (Certificate)
+                        
+                        if (currentSigOffset + 16 > data.Length) break;
+
+                        // Check if it's an X509 cert (X509 GUID: a5c059a1-94e4-4138-87ab-5a5cd152628f)
+                        // Or just try to parse it as one.
+                        
+                        int payloadSize = signatureSize - 16;
+                        if (payloadSize > 0 && currentSigOffset + 16 + payloadSize <= data.Length)
+                        {
+                            byte[] certBytes = new byte[payloadSize];
+                            Array.Copy(data, currentSigOffset + 16, certBytes, 0, payloadSize);
+
+                            try
+                            {
+                                var cert = new X509Certificate2(certBytes);
+                                certCount++;
+                                Console.WriteLine($"    Cert #{certCount}:");
+                                Console.WriteLine($"      Subject: {cert.Subject}");
+                                Console.WriteLine($"      Issuer:  {cert.Issuer}");
+                                Console.WriteLine($"      Expires: {cert.GetExpirationDateString()}");
+                            }
+                            catch
+                            {
+                                // Not a parseable cert (might be a SHA256 hash in dbx)
+                                Console.WriteLine("    [SHA256 Hash or Unknown Data]");
+                            }
+                        }
+                        currentSigOffset += signatureSize;
                     }
+                    offset += listSize;
                 }
-                Console.WriteLine();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"    Error parsing signature list: {ex.Message}");
             }
         }
+
+        // --- Low Level Boilerplate (P/Invoke) ---
 
         static byte[] GetUefiVariableEx(string name, string guid, out uint attributes)
         {
             attributes = 0;
-            // Grow buffer from 1KB to 64KB (usually enough for metadata/small vars)
-            // For listing we might not need massive buffers unless reading dbx
-            uint size = 1024;
-            while (size <= 1024 * 1024) 
+            uint size = 1024; // Start small
+            IntPtr buffer = Marshal.AllocHGlobal((int)size);
+            try
             {
-                IntPtr buffer = Marshal.AllocHGlobal((int)size);
-                try
+                int result = NativeMethods.GetFirmwareEnvironmentVariableEx(name, guid, buffer, size, out attributes);
+                if (result == 0 && Marshal.GetLastWin32Error() == 122) // ERROR_INSUFFICIENT_BUFFER
                 {
-                    uint attr = 0;
-                    int result = NativeMethods.GetFirmwareEnvironmentVariableEx(name, guid, buffer, size, out attr);
-                    int error = Marshal.GetLastWin32Error();
-
-                    if (result > 0)
-                    {
-                        attributes = attr;
-                        byte[] data = new byte[result];
-                        Marshal.Copy(buffer, data, 0, result);
-                        return data;
-                    }
-
-                    if (error == 122) // ERROR_INSUFFICIENT_BUFFER
-                    {
-                        size *= 2;
-                        continue;
-                    }
-                    
-                    return null;
+                    Marshal.FreeHGlobal(buffer);
+                    size = 32768; // Bump up for dbx
+                    buffer = Marshal.AllocHGlobal((int)size);
+                    result = NativeMethods.GetFirmwareEnvironmentVariableEx(name, guid, buffer, size, out attributes);
                 }
-                finally { Marshal.FreeHGlobal(buffer); }
+
+                if (result > 0)
+                {
+                    byte[] data = new byte[result];
+                    Marshal.Copy(buffer, data, 0, result);
+                    return data;
+                }
             }
+            finally { Marshal.FreeHGlobal(buffer); }
             return null;
         }
-
-        // --- Enumeration Logic ---
 
         class UefiVar { public string Name; public Guid Guid; }
 
@@ -297,74 +235,57 @@ namespace SecureBootParser
         {
             var list = new List<UefiVar>();
             int len = 0;
-            
-            // First call to get length
             NativeMethods.NtEnumerateSystemEnvironmentValuesEx(1, IntPtr.Zero, ref len);
-            
-            // Allocate proper size
+            if (len == 0) return list;
+
             IntPtr buffer = Marshal.AllocHGlobal(len);
             try
             {
-                int status = NativeMethods.NtEnumerateSystemEnvironmentValuesEx(1, buffer, ref len);
-                if (status != 0 && status != 0x40000000) // STATUS_SUCCESS or checks
+                if (NativeMethods.NtEnumerateSystemEnvironmentValuesEx(1, buffer, ref len) == 0)
                 {
-                    // If it fails, we might just be empty or permission denied
-                    return list;
-                }
-
-                // Walk the buffer
-                // Struct is: NextEntryOffset (4), VendorGuid (16), Name (Var)
-                IntPtr current = buffer;
-                while (true)
-                {
-                    int nextOffset = Marshal.ReadInt32(current);
-                    
-                    // Guid is at current + 4
-                    byte[] guidBytes = new byte[16];
-                    Marshal.Copy(new IntPtr(current.ToInt64() + 4), guidBytes, 0, 16);
-                    Guid guid = new Guid(guidBytes);
-
-                    // Name starts at current + 20
-                    // It is a null-terminated WCHAR string
-                    IntPtr namePtr = new IntPtr(current.ToInt64() + 20);
-                    string name = Marshal.PtrToStringUni(namePtr);
-
-                    list.Add(new UefiVar { Name = name, Guid = guid });
-
-                    if (nextOffset == 0) break;
-                    current = new IntPtr(current.ToInt64() + nextOffset);
+                    IntPtr current = buffer;
+                    while (true)
+                    {
+                        int nextOffset = Marshal.ReadInt32(current);
+                        byte[] guidBytes = new byte[16];
+                        Marshal.Copy(new IntPtr(current.ToInt64() + 4), guidBytes, 0, 16);
+                        IntPtr namePtr = new IntPtr(current.ToInt64() + 20);
+                        string name = Marshal.PtrToStringUni(namePtr);
+                        list.Add(new UefiVar { Name = name, Guid = new Guid(guidBytes) });
+                        if (nextOffset == 0) break;
+                        current = new IntPtr(current.ToInt64() + nextOffset);
+                    }
                 }
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Enumeration error: {ex.Message}");
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(buffer);
-            }
-            
+            finally { Marshal.FreeHGlobal(buffer); }
             return list;
         }
+    }
 
+    public static class PrivilegeManager
+    {
+        public static bool EnablePrivilege(string privilegeName)
+        {
+            IntPtr tokenHandle = IntPtr.Zero;
+            try
+            {
+                if (!NativeMethods.OpenProcessToken(Process.GetCurrentProcess().Handle, 0x0020 | 0x0008, out tokenHandle)) return false;
+                NativeMethods.TOKEN_PRIVILEGES tp; tp.PrivilegeCount = 1; tp.Attributes = 0x00000002;
+                if (!NativeMethods.LookupPrivilegeValue(null, privilegeName, out tp.Luid)) return false;
+                if (!NativeMethods.AdjustTokenPrivileges(tokenHandle, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero)) return false;
+                return Marshal.GetLastWin32Error() == 0;
+            }
+            finally { if (tokenHandle != IntPtr.Zero) NativeMethods.CloseHandle(tokenHandle); }
+        }
     }
 
     static class NativeMethods
     {
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-        public static extern int GetFirmwareEnvironmentVariableEx(
-            string lpName, 
-            string lpGuid, 
-            IntPtr pBuffer, 
-            uint nSize, 
-            out uint pdwAttributes);
+        public static extern int GetFirmwareEnvironmentVariableEx(string lpName, string lpGuid, IntPtr pBuffer, uint nSize, out uint pdwAttributes);
 
         [DllImport("ntdll.dll")]
-        public static extern int NtEnumerateSystemEnvironmentValuesEx(
-            int InformationClass, // VARIABLE_INFORMATION = 1
-            IntPtr Buffer,
-            ref int BufferLength
-        );
+        public static extern int NtEnumerateSystemEnvironmentValuesEx(int InformationClass, IntPtr Buffer, ref int BufferLength);
 
         [DllImport("advapi32.dll", SetLastError = true)]
         public static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
@@ -375,28 +296,10 @@ namespace SecureBootParser
         [DllImport("advapi32.dll", SetLastError = true)]
         public static extern bool AdjustTokenPrivileges(IntPtr TokenHandle, bool DisableAllPrivileges, ref TOKEN_PRIVILEGES NewState, uint BufferLength, IntPtr PreviousState, IntPtr ReturnLength);
 
-        public const uint TOKEN_ADJUST_PRIVILEGES = 0x0020;
-        public const uint TOKEN_QUERY = 0x0008;
-        public const uint SE_PRIVILEGE_ENABLED = 0x00000002;
+        [DllImport("kernel32.dll")]
+        public static extern bool CloseHandle(IntPtr hObject);
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
         public struct TOKEN_PRIVILEGES { public uint PrivilegeCount; public long Luid; public uint Attributes; }
-    }
-
-    public static class PrivilegeManager
-    {
-        public static bool EnablePrivilege(string privilegeName)
-        {
-            IntPtr tokenHandle = IntPtr.Zero;
-            try
-            {
-                if (!NativeMethods.OpenProcessToken(Process.GetCurrentProcess().Handle, NativeMethods.TOKEN_ADJUST_PRIVILEGES | NativeMethods.TOKEN_QUERY, out tokenHandle)) return false;
-                NativeMethods.TOKEN_PRIVILEGES tp; tp.PrivilegeCount = 1; tp.Attributes = NativeMethods.SE_PRIVILEGE_ENABLED;
-                if (!NativeMethods.LookupPrivilegeValue(null, privilegeName, out tp.Luid)) return false;
-                if (!NativeMethods.AdjustTokenPrivileges(tokenHandle, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero)) return false;
-                return Marshal.GetLastWin32Error() == 0;
-            }
-            finally {}
-        }
     }
 }
