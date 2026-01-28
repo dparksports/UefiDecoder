@@ -18,13 +18,13 @@ namespace UefiDecoder
         static readonly Guid EFI_CERT_SHA256_GUID = new Guid("c1c41626-504c-4092-aca9-41f936934328");
         static readonly Guid EFI_CERT_X509_GUID = new Guid("a5c059a1-94e4-4138-87ab-5a5cd152628f");
 
-        // --- Search Index ---
-        // Stores <HashString, SourceVariable>
-        static Dictionary<string, string> HashDatabase = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // --- dbx Search Index ---
+        // Stores raw hash strings found in dbx
+        static List<string> DbxHashIndex = new List<string>();
 
         static void Main(string[] args)
         {
-            Console.WriteLine("--- Antigravity UEFI Decoder v2.0 (Hash Search) ---\n");
+            Console.WriteLine("--- Antigravity UEFI Decoder v2.1 (dbx Pattern Search) ---\n");
 
             if (!PrivilegeManager.EnablePrivilege("SeSystemEnvironmentPrivilege"))
             {
@@ -42,26 +42,32 @@ namespace UefiDecoder
                 byte[] data = GetUefiVariableEx(v.Name, v.Guid.ToString("B"), out uint attrs);
                 if (data == null) continue;
 
-                // Detect Security Databases (db, dbx, KEK, PK)
-                if (v.Guid == EFI_IMAGE_SECURITY_DATABASE && 
-                   (v.Name == "db" || v.Name == "dbx" || v.Name == "KEK" || v.Name == "PK"))
+                // --- 1. The Forbidden List (dbx) ---
+                // Requirement: Print ONLY hash keys, enable pattern search
+                if (v.Guid == EFI_IMAGE_SECURITY_DATABASE && v.Name == "dbx")
                 {
                     PrintHeader(v.Name, v.Guid, data.Length);
-                    ParseSignatureList(data, v.Name);
+                    ParseDbxOnly(data);
                 }
-                // Detect Boot Order
+                // --- 2. Other Security Lists (db, KEK, PK) ---
+                // Requirement: Keep existing deciphering (Certs)
+                else if (v.Guid == EFI_IMAGE_SECURITY_DATABASE && (v.Name == "db" || v.Name == "KEK" || v.Name == "PK"))
+                {
+                    PrintHeader(v.Name, v.Guid, data.Length);
+                    ParseSignatureListStandard(data);
+                }
+                // --- 3. Boot Logic ---
                 else if (v.Name == "BootOrder" && v.Guid == EFI_GLOBAL_VARIABLE)
                 {
                     PrintHeader(v.Name, v.Guid, data.Length);
                     ParseBootOrder(data);
                 }
-                // Detect Boot Options
                 else if (v.Name.StartsWith("Boot0") && v.Guid == EFI_GLOBAL_VARIABLE)
                 {
                     PrintHeader(v.Name, v.Guid, data.Length);
                     ParseBootOption(data);
                 }
-                // Detect Secure Boot State
+                // --- 4. State Flags ---
                 else if (v.Name == "SecureBoot" || v.Name == "SetupMode")
                 {
                     PrintHeader(v.Name, v.Guid, data.Length);
@@ -69,31 +75,46 @@ namespace UefiDecoder
                 }
             }
 
-            // --- Interactive Search Mode ---
-            Console.WriteLine(new string('-', 50));
+            // --- Interactive dbx Search Mode ---
+            Console.WriteLine(new string('-', 60));
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"\nIndexing Complete. Loaded {HashDatabase.Count} unique hashes into memory.");
+            Console.WriteLine($"\n[dbx Analysis] Indexed {DbxHashIndex.Count} hashes from the revocation list.");
             Console.ResetColor();
-            Console.WriteLine("Enter a SHA-256 Hash to search (or press Enter to exit):");
+            Console.WriteLine("Enter a partial hash pattern to search dbx (e.g. '459458' for BlackLotus):");
+            Console.WriteLine("(Press Enter to exit)");
 
             while (true)
             {
-                Console.Write("> ");
-                string input = Console.ReadLine()?.Trim().Replace(" ", "").Replace(":", ""); // Clean input
+                Console.Write("\nSearch dbx > ");
+                string input = Console.ReadLine()?.Trim().Replace(" ", "").Replace(":", "").ToUpper(); // Normalize input
                 if (string.IsNullOrEmpty(input)) break;
 
-                if (HashDatabase.TryGetValue(input, out string source))
+                // Pattern Match
+                var matches = DbxHashIndex.Where(h => h.Contains(input)).ToList();
+
+                if (matches.Count > 0)
                 {
                     Console.ForegroundColor = ConsoleColor.Green;
-                    Console.WriteLine($"[MATCH FOUND] This hash exists in: {source}");
-                    Console.WriteLine("Your system is AWARE of this binary (Allowed or Banned depending on list).");
+                    Console.WriteLine($"FOUND {matches.Count} MATCH(ES) in dbx:");
+                    Console.ResetColor();
+                    foreach (var match in matches.Take(5)) // Limit output to 5 to avoid spamming
+                    {
+                        // Highlight the matching part
+                        int index = match.IndexOf(input);
+                        Console.Write("  Hash: " + match.Substring(0, index));
+                        Console.ForegroundColor = ConsoleColor.Yellow;
+                        Console.Write(match.Substring(index, input.Length));
+                        Console.ResetColor();
+                        Console.WriteLine(match.Substring(index + input.Length));
+                    }
+                    if (matches.Count > 5) Console.WriteLine($"  ...and {matches.Count - 5} more.");
                 }
                 else
                 {
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine("[NO MATCH] This hash is not in your NVRAM.");
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine("No matches found in dbx.");
+                    Console.ResetColor();
                 }
-                Console.ResetColor();
             }
         }
 
@@ -106,10 +127,11 @@ namespace UefiDecoder
             Console.ResetColor();
         }
 
-        static void ParseSignatureList(byte[] data, string varName)
+        // --- Logic 1: dbx Specialized Parser (Hashes Only) ---
+        static void ParseDbxOnly(byte[] data)
         {
             int offset = 0;
-            int itemIndex = 0;
+            int count = 0;
 
             try 
             {
@@ -117,7 +139,6 @@ namespace UefiDecoder
                 {
                     if (offset + 28 > data.Length) break; 
 
-                    // Read Signature List Header
                     byte[] guidBytes = new byte[16];
                     Array.Copy(data, offset, guidBytes, 0, 16);
                     Guid typeGuid = new Guid(guidBytes);
@@ -126,54 +147,94 @@ namespace UefiDecoder
                     int headerSize = BitConverter.ToInt32(data, offset + 20);
                     int signatureSize = BitConverter.ToInt32(data, offset + 24);
 
-                    // Loop through signatures in this list
-                    int currentSigOffset = offset + 28 + headerSize; // Skip header
+                    int currentSigOffset = offset + 28 + headerSize;
                     int endOfList = offset + listSize;
 
                     while (currentSigOffset < endOfList)
                     {
                         if (currentSigOffset + 16 > data.Length) break;
 
-                        // The first 16 bytes of data is the "Owner GUID" (who added this key)
-                        // The rest is the Payload (Cert or Hash)
                         int payloadSize = signatureSize - 16;
                         if (payloadSize > 0 && currentSigOffset + 16 + payloadSize <= data.Length)
                         {
                             byte[] payload = new byte[payloadSize];
                             Array.Copy(data, currentSigOffset + 16, payload, 0, payloadSize);
-                            itemIndex++;
 
+                            // Only process SHA256 for dbx output as requested
                             if (typeGuid == EFI_CERT_SHA256_GUID)
                             {
-                                // --- DECIPHER HASH ---
                                 string hashString = BitConverter.ToString(payload).Replace("-", "");
-                                Console.WriteLine($"    [{itemIndex}] SHA-256: {hashString}");
-                                
-                                // Add to search index
-                                if (!HashDatabase.ContainsKey(hashString))
-                                    HashDatabase.Add(hashString, varName);
+                                count++;
+                                // Add to global index
+                                DbxHashIndex.Add(hashString);
+                                // Print immediate output
+                                Console.WriteLine($"    Hash: {hashString}");
                             }
-                            else if (typeGuid == EFI_CERT_X509_GUID)
+                        }
+                        currentSigOffset += signatureSize;
+                    }
+                    offset += listSize;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"    Error parsing dbx: {ex.Message}");
+            }
+        }
+
+        // --- Logic 2: Standard Parser (Certificates) for db/KEK/PK ---
+        static void ParseSignatureListStandard(byte[] data)
+        {
+            int offset = 0;
+            int certCount = 0;
+
+            try 
+            {
+                while (offset < data.Length)
+                {
+                    if (offset + 28 > data.Length) break; 
+
+                    byte[] guidBytes = new byte[16];
+                    Array.Copy(data, offset, guidBytes, 0, 16);
+                    Guid typeGuid = new Guid(guidBytes);
+
+                    int listSize = BitConverter.ToInt32(data, offset + 16);
+                    int headerSize = BitConverter.ToInt32(data, offset + 20);
+                    int signatureSize = BitConverter.ToInt32(data, offset + 24);
+
+                    int currentSigOffset = offset + 28 + headerSize;
+                    int endOfList = offset + listSize;
+
+                    while (currentSigOffset < endOfList)
+                    {
+                        if (currentSigOffset + 16 > data.Length) break;
+
+                        int payloadSize = signatureSize - 16;
+                        if (payloadSize > 0 && currentSigOffset + 16 + payloadSize <= data.Length)
+                        {
+                            byte[] payload = new byte[payloadSize];
+                            Array.Copy(data, currentSigOffset + 16, payload, 0, payloadSize);
+
+                            if (typeGuid == EFI_CERT_X509_GUID)
                             {
-                                // --- DECIPHER CERT ---
                                 try
                                 {
                                     var cert = new X509Certificate2(payload);
-                                    Console.WriteLine($"    [{itemIndex}] X.509: {cert.Subject}");
+                                    certCount++;
+                                    Console.WriteLine($"    Cert #{certCount}:");
+                                    Console.WriteLine($"      Subject: {cert.Subject}");
                                     Console.ForegroundColor = ConsoleColor.DarkGray;
-                                    Console.WriteLine($"         Issuer:  {cert.Issuer}");
-                                    Console.WriteLine($"         Expires: {cert.GetExpirationDateString()}");
+                                    Console.WriteLine($"      Issuer:  {cert.Issuer}");
+                                    Console.WriteLine($"      Expires: {cert.GetExpirationDateString()}");
                                     Console.ResetColor();
                                 }
                                 catch
                                 {
-                                    Console.WriteLine($"    [{itemIndex}] [Invalid X.509 Data]");
+                                    Console.WriteLine("    [Invalid X.509 Data]");
                                 }
                             }
-                            else
-                            {
-                                Console.WriteLine($"    [{itemIndex}] Unknown Type ({typeGuid})");
-                            }
+                            // We purposefully ignore raw hashes here to keep db/KEK/PK output clean 
+                            // unless they are certs, per standard usage.
                         }
                         currentSigOffset += signatureSize;
                     }
@@ -186,11 +247,16 @@ namespace UefiDecoder
             }
         }
 
-        // --- Helpers ---
+        // --- Helpers (Unchanged) ---
         static void ParseBoolean(byte[] data)
         {
             if (data.Length > 0)
-                Console.WriteLine($"    Value: {(data[0] == 1 ? "Enabled (1)" : "Disabled (0)")}");
+            {
+                bool val = data[0] == 1;
+                Console.ForegroundColor = val ? ConsoleColor.Green : ConsoleColor.Yellow;
+                Console.WriteLine($"    Value: {(val ? "Enabled (1)" : "Disabled (0)")}");
+                Console.ResetColor();
+            }
         }
 
         static void ParseBootOrder(byte[] data)
@@ -230,7 +296,7 @@ namespace UefiDecoder
                 if (result == 0 && Marshal.GetLastWin32Error() == 122) 
                 {
                     Marshal.FreeHGlobal(buffer);
-                    size = 65536; // Increased buffer for large dbx
+                    size = 65536; // 64KB Buffer for large dbx
                     buffer = Marshal.AllocHGlobal((int)size);
                     result = NativeMethods.GetFirmwareEnvironmentVariableEx(name, guid, buffer, size, out attributes);
                 }
