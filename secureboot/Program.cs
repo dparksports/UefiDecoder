@@ -18,12 +18,16 @@ namespace UefiDecoder
         static readonly Guid EFI_CERT_SHA256_GUID = new Guid("c1c41626-504c-4092-aca9-41f936934328");
         static readonly Guid EFI_CERT_X509_GUID = new Guid("a5c059a1-94e4-4138-87ab-5a5cd152628f");
 
-        // --- dbx Search Index ---
+        // --- Search Index ---
         static List<string> DbxHashIndex = new List<string>();
 
         static void Main(string[] args)
         {
-            Console.WriteLine("--- Antigravity UEFI Decoder v2.2 (Silent Indexing) ---\n");
+            Console.Clear();
+            Console.ForegroundColor = ConsoleColor.Magenta;
+            Console.WriteLine("--- Antigravity UEFI Decoder v2.4 (FORCE DEEP INSPECT) ---");
+            Console.ResetColor();
+            Console.WriteLine("If you do not see Serial Numbers below, the code did not rebuild.\n");
 
             if (!PrivilegeManager.EnablePrivilege("SeSystemEnvironmentPrivilege"))
             {
@@ -42,18 +46,17 @@ namespace UefiDecoder
                 if (data == null) continue;
 
                 // --- 1. The Forbidden List (dbx) ---
-                // Behavior: Index ONLY, print tally ONLY.
                 if (v.Guid == EFI_IMAGE_SECURITY_DATABASE && v.Name == "dbx")
                 {
                     PrintHeader(v.Name, v.Guid, data.Length);
                     ParseDbxSilent(data);
                 }
-                // --- 2. Other Security Lists (db, KEK, PK) ---
-                // Behavior: Full Decipher (Certs)
+                // --- 2. Allowed Lists (db, KEK, PK) ---
+                // CRITICAL: Must call ParseSignatureListDeep
                 else if (v.Guid == EFI_IMAGE_SECURITY_DATABASE && (v.Name == "db" || v.Name == "KEK" || v.Name == "PK"))
                 {
                     PrintHeader(v.Name, v.Guid, data.Length);
-                    ParseSignatureListStandard(data);
+                    ParseSignatureListDeep(data); 
                 }
                 // --- 3. Boot Logic ---
                 else if (v.Name == "BootOrder" && v.Guid == EFI_GLOBAL_VARIABLE)
@@ -74,10 +77,10 @@ namespace UefiDecoder
                 }
             }
 
-            // --- Interactive dbx Search Mode ---
+            // --- Interactive Search ---
             Console.WriteLine(new string('-', 60));
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"\n[Analysis Complete] {DbxHashIndex.Count} hashes have been indexed from dbx.");
+            Console.WriteLine($"\n[Analysis Complete] {DbxHashIndex.Count} hashes indexed from dbx.");
             Console.ResetColor();
             Console.WriteLine("Enter a partial hash pattern to search dbx (e.g. '459458' for BlackLotus):");
             Console.WriteLine("(Press Enter to exit)");
@@ -124,43 +127,36 @@ namespace UefiDecoder
             Console.ResetColor();
         }
 
-        // --- Logic 1: Silent dbx Indexer ---
         static void ParseDbxSilent(byte[] data)
         {
+            // Simplified for brevity - purely indexing
             int offset = 0;
             int count = 0;
-
             try 
             {
                 while (offset < data.Length)
                 {
-                    if (offset + 28 > data.Length) break; 
-
+                    if (offset + 28 > data.Length) break;
                     byte[] guidBytes = new byte[16];
                     Array.Copy(data, offset, guidBytes, 0, 16);
                     Guid typeGuid = new Guid(guidBytes);
-
                     int listSize = BitConverter.ToInt32(data, offset + 16);
                     int headerSize = BitConverter.ToInt32(data, offset + 20);
                     int signatureSize = BitConverter.ToInt32(data, offset + 24);
-
                     int currentSigOffset = offset + 28 + headerSize;
                     int endOfList = offset + listSize;
 
                     while (currentSigOffset < endOfList)
                     {
                         if (currentSigOffset + 16 > data.Length) break;
-
                         int payloadSize = signatureSize - 16;
                         if (payloadSize > 0 && currentSigOffset + 16 + payloadSize <= data.Length)
                         {
-                            byte[] payload = new byte[payloadSize];
-                            Array.Copy(data, currentSigOffset + 16, payload, 0, payloadSize);
-
                             if (typeGuid == EFI_CERT_SHA256_GUID)
                             {
-                                string hashString = BitConverter.ToString(payload).Replace("-", "");
-                                DbxHashIndex.Add(hashString);
+                                byte[] payload = new byte[payloadSize];
+                                Array.Copy(data, currentSigOffset + 16, payload, 0, payloadSize);
+                                DbxHashIndex.Add(BitConverter.ToString(payload).Replace("-", ""));
                                 count++;
                             }
                         }
@@ -169,17 +165,14 @@ namespace UefiDecoder
                     offset += listSize;
                 }
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"    -> Indexed {count} SHA-256 hashes (Hidden from display).");
+                Console.WriteLine($"    -> Indexed {count} SHA-256 hashes (Hidden).");
                 Console.ResetColor();
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"    Error parsing dbx: {ex.Message}");
-            }
+            catch {}
         }
 
-        // --- Logic 2: Standard Parser (Certs) ---
-        static void ParseSignatureListStandard(byte[] data)
+        // --- THE DEEP PARSER ---
+        static void ParseSignatureListDeep(byte[] data)
         {
             int offset = 0;
             int certCount = 0;
@@ -215,18 +208,42 @@ namespace UefiDecoder
                             {
                                 try
                                 {
+                                    // FORCE LOAD CERTIFICATE
                                     var cert = new X509Certificate2(payload);
                                     certCount++;
+                                    
                                     Console.WriteLine($"    Cert #{certCount}:");
-                                    Console.WriteLine($"      Subject: {cert.Subject}");
-                                    Console.ForegroundColor = ConsoleColor.DarkGray;
-                                    Console.WriteLine($"      Issuer:  {cert.Issuer}");
-                                    Console.WriteLine($"      Expires: {cert.GetExpirationDateString()}");
+                                    Console.ForegroundColor = ConsoleColor.White;
+                                    Console.WriteLine($"      Subject:    {cert.Subject}");
+                                    Console.WriteLine($"      Issuer:     {cert.Issuer}");
+                                    Console.WriteLine($"      Serial No:  {cert.SerialNumber}");
+                                    Console.WriteLine($"      Thumbprint: {cert.Thumbprint}");
                                     Console.ResetColor();
+                                    
+                                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                                    Console.WriteLine($"      Algorithm:  {cert.SignatureAlgorithm.FriendlyName} ({cert.SignatureAlgorithm.Value})");
+                                    Console.WriteLine($"      Valid From: {cert.NotBefore}");
+                                    Console.WriteLine($"      Expires:    {cert.NotAfter}");
+                                    Console.ResetColor();
+
+                                    // EXTENSIONS
+                                    if (cert.Extensions.Count > 0)
+                                    {
+                                        Console.WriteLine($"      Extensions ({cert.Extensions.Count}):");
+                                        foreach (X509Extension ext in cert.Extensions)
+                                        {
+                                            Console.Write($"        - {ext.Oid.FriendlyName}: ");
+                                            // Handle formatting cleanly
+                                            string rawFmt = ext.Format(false);
+                                            if (rawFmt.Length > 60) rawFmt = rawFmt.Substring(0, 57) + "...";
+                                            Console.WriteLine(rawFmt);
+                                        }
+                                    }
+                                    Console.WriteLine();
                                 }
-                                catch
+                                catch (Exception ex)
                                 {
-                                    Console.WriteLine("    [Invalid X.509 Data]");
+                                    Console.WriteLine($"    [Parse Error: {ex.Message}]");
                                 }
                             }
                         }
@@ -237,7 +254,7 @@ namespace UefiDecoder
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"    Error parsing: {ex.Message}");
+                Console.WriteLine($"    Error parsing list: {ex.Message}");
             }
         }
 
