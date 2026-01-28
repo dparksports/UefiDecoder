@@ -2,6 +2,9 @@
 
 **UefiDecoder** is a forensic-grade C# utility for inspecting Windows UEFI Secure Boot configurations. It provides deep visibility into `EFI_SIGNATURE_LIST` variables (`PK`, `KEK`, `db`, `dbx`) and other critical NVRAM variables, offering a significant upgrade over standard hex dump tools.
 
+## Download
+**[Ep Download v3.0.0 (Latest Release)](https://github.com/dparksports/UefiDecoder/releases/download/v3.0.0/UefiDecoder_v3.0.0.zip)**
+
 ![UefiDecoder Screenshot](screenshot.png)
 
 ## Features
